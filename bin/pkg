@@ -1,0 +1,252 @@
+#!/usr/bin/env bash
+# pkg - basic unified package management wrapper
+# Requires Bash ≥ 4.2
+#
+# Usage:
+#   pkg                          → show detected packaging system + distro
+#   pkg install   <name...>
+#   pkg remove    <name...>
+#   pkg update                   → refresh package database
+#   pkg upgrade   [name...]      → upgrade all (or specific packages)
+
+
+
+# ----------------------------------------------------------------------
+# Hierarchical name translation (exactly as you designed)
+# ----------------------------------------------------------------------
+declare -A ASSOC=(
+  # ---------- examples ----------
+  # Common fallback
+  [curl]="curl"
+
+  # Packaging-system level
+  [docker/pacman]="docker docker-rc"
+  [docker/apt]="docker.io"
+
+  # Virtual / macro package example
+  [build-essential/apt]="build-essential"
+  [build-essential/pacman]="base-devel"
+  [build-essential/apk]="build-base"
+  [build-essential/dnf]="gcc gcc-c++ make"
+  [build-essential/xbps]="base-devel"
+
+  # Another example
+  [python/apt]="python3"
+  [python/apk]="python3"
+  [python/dnf]="python3"
+)
+
+set -euo pipefail
+
+assoc_translate() {
+  # Build path only from non-empty / non-"unknown" components
+  local -a path=()
+  local arg
+  for arg in "$@"; do
+    [[ -n "$arg" && "$arg" != "unknown" ]] && path+=("$arg")
+  done
+
+  local key i
+  # Start from the longest key and go shorter
+  for (( i = ${#path[@]}; i > 0; i-- )); do
+    printf -v key '%s/' "${path[@]:0:i}"
+    key=${key%/}          # remove trailing slash
+    if [[ -v ASSOC[$key] ]]; then
+      printf '%s' "${ASSOC[$key]}"   # ← no newline
+      return 0
+    fi
+  done
+
+  # Ultimate fallback – always return something
+  printf '%s' "$1"
+}
+
+# ----------------------------------------------------------------------
+# Detection
+# ----------------------------------------------------------------------
+detect_pkg_system() {
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "apt"
+  elif command -v pacman >/dev/null 2>&1; then
+    echo "pacman"
+  elif command -v dnf >/dev/null 2>&1; then
+    echo "dnf"
+  elif command -v yum >/dev/null 2>&1; then
+    echo "yum"
+  elif command -v apk >/dev/null 2>&1; then
+    echo "apk"
+  elif command -v xbps-install >/dev/null 2>&1; then
+    echo "xbps"
+  elif command -v zypper >/dev/null 2>&1; then
+    echo "zypper"
+  else
+    echo "unknown"
+  fi
+}
+
+detect_distro() {
+  if [[ -f /etc/os-release ]]; then
+    # shellcheck source=/dev/null
+    . /etc/os-release
+    echo "${ID:-unknown}"
+  else
+    echo "unknown"
+  fi
+}
+
+detect_version() {
+  if [[ -f /etc/os-release ]]; then
+    # shellcheck source=/dev/null
+    . /etc/os-release
+    # Prefer VERSION_CODENAME, then VERSION_ID
+    echo "${VERSION_CODENAME:-${VERSION_ID:-unknown}}"
+  else
+    echo "unknown"
+  fi
+}
+
+# ----------------------------------------------------------------------
+# Resolve one logical name → real package name(s)
+# ----------------------------------------------------------------------
+resolve() {
+  local name="$1"
+  local sys="$PKG_SYSTEM"
+  local distro="$DISTRO"
+  local ver="$VERSION"
+
+  assoc_translate "$name" "$sys" "$distro" "$ver"
+}
+
+# ----------------------------------------------------------------------
+# No arguments → show environment
+# ----------------------------------------------------------------------
+if [[ $# -eq 0 ]]; then
+  PKG_SYSTEM=$(detect_pkg_system)
+  DISTRO=$(detect_distro)
+  VERSION=$(detect_version)
+  echo "packaging-system : $PKG_SYSTEM"
+  echo "distro           : $DISTRO"
+  echo "version          : $VERSION"
+  exit 0
+fi
+
+# ----------------------------------------------------------------------
+# Main
+# ----------------------------------------------------------------------
+ACTION="$1"
+shift || true
+
+PKG_SYSTEM=$(detect_pkg_system)
+DISTRO=$(detect_distro)
+VERSION=$(detect_version)
+
+if [[ "$PKG_SYSTEM" == "unknown" ]]; then
+  echo "pkg: unsupported or undetected packaging system" >&2
+  exit 1
+fi
+
+resolved=()
+for n in "$@"; do
+  # Important: use array assignment so multiple packages are split correctly
+  read -ra parts <<< "$(assoc_translate "$n" "$PKG_SYSTEM" "$DISTRO" "$VERSION")"
+  resolved+=("${parts[@]}")
+done
+
+case "$ACTION" in
+
+  install)
+    [[ $# -eq 0 ]] && { echo "pkg: install requires at least one package" >&2; exit 1; }
+    
+
+    case "$PKG_SYSTEM" in
+      apt)    apt-get install -y --no-install-recommends "${resolved[@]}" ;;
+      pacman) pacman -S --noconfirm --needed "${resolved[@]}" ;;
+      dnf)    dnf install -y "${resolved[@]}" ;;
+      yum)    yum install -y "${resolved[@]}" ;;
+      apk)    apk add --no-cache "${resolved[@]}" ;;
+      xbps)   xbps-install -y "${resolved[@]}" ;;
+      zypper) zypper --non-interactive install "${resolved[@]}" ;;
+    esac
+    ;;
+  print)
+    echo "${resolved[@]}";;
+
+  remove|uninstall)
+    [[ $# -eq 0 ]] && { echo "pkg: remove requires at least one package" >&2; exit 1; }
+
+    resolved=()
+    for n in "$@"; do
+      # shellcheck disable=SC2207
+      resolved+=( $(resolve "$n") )
+    done
+
+    case "$PKG_SYSTEM" in
+      apt)    apt-get remove -y "${resolved[@]}" ;;
+      pacman) pacman -R --noconfirm "${resolved[@]}" ;;
+      dnf)    dnf remove -y "${resolved[@]}" ;;
+      yum)    yum remove -y "${resolved[@]}" ;;
+      apk)    apk del "${resolved[@]}" ;;
+      xbps)   xbps-remove -y "${resolved[@]}" ;;
+      zypper) zypper --non-interactive remove "${resolved[@]}" ;;
+    esac
+    ;;
+
+  update)
+    case "$PKG_SYSTEM" in
+      apt)    apt-get update -qq ;;
+      pacman) pacman -Sy --noconfirm ;;
+      dnf)    dnf check-update || true ;;
+      yum)    yum check-update || true ;;
+      apk)    apk update ;;
+      xbps)   xbps-install -S ;;
+      zypper) zypper refresh ;;
+    esac
+    ;;
+
+  upgrade)
+    case "$PKG_SYSTEM" in
+      apt)
+        if [[ $# -gt 0 ]]; then
+          resolved=()
+          for n in "$@"; do resolved+=( $(resolve "$n") ); done
+          apt-get install -y --only-upgrade "${resolved[@]}"
+        else
+          apt-get upgrade -y
+        fi
+        ;;
+      pacman)
+        if [[ $# -gt 0 ]]; then
+          resolved=()
+          for n in "$@"; do resolved+=( $(resolve "$n") ); done
+          pacman -S --noconfirm "${resolved[@]}"
+        else
+          pacman -Su --noconfirm
+        fi
+        ;;
+      dnf|yum)
+        if [[ $# -gt 0 ]]; then
+          resolved=()
+          for n in "$@"; do resolved+=( $(resolve "$n") ); done
+          $PKG_SYSTEM upgrade -y "${resolved[@]}"
+        else
+          $PKG_SYSTEM upgrade -y
+        fi
+        ;;
+      apk)
+        apk upgrade
+        ;;
+      xbps)
+        xbps-install -u
+        ;;
+      zypper)
+        zypper --non-interactive update
+        ;;
+    esac
+    ;;
+
+  *)
+    echo "pkg: unknown action '$ACTION'" >&2
+    echo "Usage: pkg [install|remove|update|upgrade] ..." >&2
+    exit 1
+    ;;
+esac

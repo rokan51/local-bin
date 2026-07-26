@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# service - simple unified service management wrapper
+# Works across systemd / openrc / runit / dinit / sysv / s6
+#
+# Usage:
+#   service                     → print detected init system
+#   service <name> start|stop|restart|status|enable|disable
+
+set -euo pipefail
+
+# ----------------------------------------------------------------------
+# Init detection
+# ----------------------------------------------------------------------
+detect_init() {
+    if [[ -d /run/systemd/system ]]; then
+        echo "systemd"
+        return
+    fi
+
+    local comm="" exe=""
+    [[ -r /proc/1/comm ]] && comm=$(tr -d '\0' < /proc/1/comm)
+    [[ -r /proc/1/exe  ]] && exe=$(readlink -f /proc/1/exe 2>/dev/null || true)
+
+    case "$comm" in
+        systemd)          echo "systemd"; return ;;
+        runit)            echo "runit";   return ;;
+        dinit)            echo "dinit";   return ;;
+        s6-svscan|s6-linux-init|s6) echo "s6"; return ;;
+        openrc-init)      echo "openrc";  return ;;
+    esac
+
+    case "$exe" in
+        */systemd)        echo "systemd"; return ;;
+        */runit*)         echo "runit";   return ;;
+        */dinit)          echo "dinit";   return ;;
+        */s6*)            echo "s6";      return ;;
+        */openrc*)        echo "openrc";  return ;;
+    esac
+
+    if [[ -d /run/openrc ]] || command -v rc-service >/dev/null 2>&1; then
+        echo "openrc"; return
+    fi
+    if [[ -d /var/service || -d /run/runit/service || -d /etc/runit ]]; then
+        echo "runit"; return
+    fi
+    if command -v dinitctl >/dev/null 2>&1 || [[ -d /etc/dinit.d ]]; then
+        echo "dinit"; return
+    fi
+    if command -v s6-rc >/dev/null 2>&1; then
+        echo "s6"; return
+    fi
+    if [[ -d /etc/init.d ]]; then
+        echo "sysv"; return
+    fi
+
+    echo "unknown"
+}
+
+# ----------------------------------------------------------------------
+# No arguments → just show the init system
+# ----------------------------------------------------------------------
+if [[ $# -eq 0 ]]; then
+    detect_init
+    exit 0
+fi
+
+# ----------------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------------
+die() { echo "service: $*" >&2; exit 1; }
+
+# ----------------------------------------------------------------------
+# Main
+# ----------------------------------------------------------------------
+[[ $# -lt 2 ]] && die "usage: service <name> start|stop|restart|status|enable|disable"
+
+NAME="$1"
+ACTION="$2"
+INIT=$(detect_init)
+
+NAME_SYSTEMD="${NAME%.service}"
+
+case "$INIT" in
+
+systemd)
+    case "$ACTION" in
+        start)    systemctl start   "$NAME_SYSTEMD" ;;
+        stop)     systemctl stop    "$NAME_SYSTEMD" ;;
+        restart)  systemctl restart "$NAME_SYSTEMD" ;;
+        status)   systemctl --no-pager --full status "$NAME_SYSTEMD" ;;
+        enable)   systemctl enable  "$NAME_SYSTEMD" ;;
+        disable)  systemctl disable "$NAME_SYSTEMD" ;;
+        *)        die "unsupported action: $ACTION" ;;
+    esac
+    ;;
+
+openrc)
+    case "$ACTION" in
+        start)    rc-service "$NAME" start ;;
+        stop)     rc-service "$NAME" stop ;;
+        restart)  rc-service "$NAME" restart ;;
+        status)   rc-service "$NAME" status ;;
+        enable)   rc-update add "$NAME" default ;;
+        disable)  rc-update del "$NAME" default ;;
+        *)        die "unsupported action: $ACTION" ;;
+    esac
+    ;;
+
+runit)
+    if [[ -d /var/service ]]; then
+        SVDIR=/var/service
+        SVSRC=/etc/sv
+    elif [[ -d /run/runit/service ]]; then
+        SVDIR=/run/runit/service
+        SVSRC=/etc/runit/sv
+    else
+        die "cannot find runit service directory"
+    fi
+
+    case "$ACTION" in
+        start)    sv up   "$NAME" ;;
+        stop)     sv down "$NAME" ;;
+        restart)  sv restart "$NAME" ;;
+        status)   sv status "$NAME" ;;
+        enable)
+            [[ -d "$SVSRC/$NAME" ]] || die "service definition not found in $SVSRC/$NAME"
+            ln -sf "$SVSRC/$NAME" "$SVDIR/"
+            ;;
+        disable)
+            rm -f "$SVDIR/$NAME"
+            ;;
+        *) die "unsupported action: $ACTION" ;;
+    esac
+    ;;
+
+dinit)
+    case "$ACTION" in
+        start)    dinitctl start   "$NAME" ;;
+        stop)     dinitctl stop    "$NAME" ;;
+        restart)  dinitctl restart "$NAME" 2>/dev/null || { dinitctl stop "$NAME"; dinitctl start "$NAME"; } ;;
+        status)   dinitctl status  "$NAME" ;;
+        enable)   dinitctl enable  "$NAME" ;;
+        disable)  dinitctl disable "$NAME" ;;
+        *)        die "unsupported action: $ACTION" ;;
+    esac
+    ;;
+
+s6)
+    if ! command -v s6-rc >/dev/null 2>&1; then
+        die "s6-rc not found – limited support"
+    fi
+    case "$ACTION" in
+        start)    s6-rc -u change "$NAME" ;;
+        stop)     s6-rc -d change "$NAME" ;;
+        restart)  s6-rc -d change "$NAME"; s6-rc -u change "$NAME" ;;
+        status)   s6-rc -l change 2>/dev/null | grep -E "(^| )$NAME( |$)" || echo "$NAME: unknown" ;;
+        enable|disable)
+            echo "service: enable/disable on pure s6-rc requires database recompile." >&2
+            exit 1
+            ;;
+        *) die "unsupported action: $ACTION" ;;
+    esac
+    ;;
+
+sysv)
+    SCRIPT="/etc/init.d/$NAME"
+    [[ -x "$SCRIPT" ]] || die "no init script: $SCRIPT"
+
+    case "$ACTION" in
+        start|stop|restart|status)
+            "$SCRIPT" "$ACTION"
+            ;;
+        enable)
+            if command -v update-rc.d >/dev/null 2>&1; then
+                update-rc.d "$NAME" defaults
+            elif command -v chkconfig >/dev/null 2>&1; then
+                chkconfig "$NAME" on
+            else
+                die "cannot enable (no update-rc.d / chkconfig)"
+            fi
+            ;;
+        disable)
+            if command -v update-rc.d >/dev/null 2>&1; then
+                update-rc.d "$NAME" remove
+            elif command -v chkconfig >/dev/null 2>&1; then
+                chkconfig "$NAME" off
+            else
+                die "cannot disable"
+            fi
+            ;;
+        *) die "unsupported action: $ACTION" ;;
+    esac
+    ;;
+
+*)
+    die "unsupported or undetected init system: $INIT"
+    ;;
+esac
