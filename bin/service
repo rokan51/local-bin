@@ -72,11 +72,18 @@ die() { echo "service: $*" >&2; exit 1; }
 # ----------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------
+
+INIT=$(detect_init)
+if [[ $# -lt 1 ]] ; then
+  echo "$INIT"  # output name of init system
+  exit 0
+fi
+
 [[ $# -lt 2 ]] && die "usage: service <name> start|stop|restart|status|enable|disable"
 
 NAME="$1"
 ACTION="$2"
-INIT=$(detect_init)
+
 
 NAME_SYSTEMD="${NAME%.service}"
 

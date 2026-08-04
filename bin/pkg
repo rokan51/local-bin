@@ -1,44 +1,151 @@
 #!/usr/bin/env bash
 # pkg - basic unified package management wrapper
-# Requires Bash ≥ 4.2
+# Requires Bash ≥ 4.3
 #
 # Usage:
 #   pkg                          → show detected packaging system + distro
-#   pkg install   <name...>
-#   pkg remove    <name...>
-#   pkg update                   → refresh package database
-#   pkg upgrade   [name...]      → upgrade all (or specific packages)
+#
+#   pkg system                   shows native packaging system (apt/pacman/..)
+#   pkg distro                   shows name of distribution
+#   pkg version                  shows name of distro version
+#   pkg init                     shows name of init system used
+#   pkg package <name...>        shows translated package name(s)
+#
+# Management of installed packages
+#   pkg [options] install   <package...>
+#   pkg [options] remove    <package...>
+#   pkg [options] update                     refresh package database
+#   pkg [options] upgrade   [package...]     upgrade all (or specific packages)
+#
+# Management of services
+#   pkg [options] start   <service...>
+#   pkg [options] stop    <service...>
+#   pkg [options] restart <service...>
+#   pkg [options] status  <service...>
+#   pkg [options] enable  <service...>       add service to default level
+#   pkg [options] disable <service...>       remove service from default level
+#
+# Currently the only option is -d or --dry: it prints the command instead of execution
 
+set -euo pipefail
 
+die() {
+  echo "pkg: $*" >&2
+  exit 1
+}
 
 # ----------------------------------------------------------------------
-# Hierarchical name translation (exactly as you designed)
+# Detection
 # ----------------------------------------------------------------------
-declare -A ASSOC=(
-  # ---------- examples ----------
-  # Common fallback
-  [curl]="curl"
+PKG_SYSTEM=""
+DISTRO=""
+VERSION=""
 
-  # Packaging-system level
-  [docker/pacman]="docker docker-rc"
+if command -v apt-get >/dev/null 2>&1; then
+  PKG_SYSTEM="apt"
+elif command -v pacman >/dev/null 2>&1; then
+  PKG_SYSTEM="pacman"
+elif command -v dnf >/dev/null 2>&1; then
+  PKG_SYSTEM="dnf"
+elif command -v yum >/dev/null 2>&1; then
+  PKG_SYSTEM="yum"
+elif command -v apk >/dev/null 2>&1; then
+  PKG_SYSTEM="apk"
+elif command -v xbps-install >/dev/null 2>&1; then
+  PKG_SYSTEM="xbps"
+elif command -v zypper >/dev/null 2>&1; then
+  PKG_SYSTEM="zypper"
+fi
+
+if [[ -f /etc/os-release ]]; then
+  # shellcheck source=/dev/null
+  . /etc/os-release
+  DISTRO="${ID:-}"
+  # Prefer VERSION_CODENAME, then VERSION_ID
+  VERSION="${VERSION_CODENAME:-${VERSION_ID:-}}"
+fi
+
+# ----------------------------------------------------------------------
+# Init detection
+# ----------------------------------------------------------------------
+detect_init() {
+  if [[ -d /run/systemd/system ]]; then
+    echo "systemd"
+    return
+  fi
+
+  local comm="" exe=""
+  [[ -r /proc/1/comm ]] && comm=$(tr -d '\0' < /proc/1/comm)
+  [[ -r /proc/1/exe  ]] && exe=$(readlink -f /proc/1/exe 2>/dev/null || true)
+
+  case "$comm" in
+    systemd)          echo "systemd"; return ;;
+    runit)            echo "runit";   return ;;
+    dinit)            echo "dinit";   return ;;
+    s6-svscan|s6-linux-init|s6) echo "s6"; return ;;
+    openrc-init)      echo "openrc";  return ;;
+  esac
+
+  case "$exe" in
+    */systemd)        echo "systemd"; return ;;
+    */runit*)         echo "runit";   return ;;
+    */dinit)          echo "dinit";   return ;;
+    */s6*)            echo "s6";      return ;;
+    */openrc*)        echo "openrc";  return ;;
+  esac
+
+  if [[ -d /run/openrc ]] || command -v rc-service >/dev/null 2>&1; then
+    echo "openrc"; return
+  fi
+  if [[ -d /var/service || -d /run/runit/service || -d /etc/runit ]]; then
+    echo "runit"; return
+  fi
+  if command -v dinitctl >/dev/null 2>&1 || [[ -d /etc/dinit.d ]]; then
+    echo "dinit"; return
+  fi
+  if command -v s6-rc >/dev/null 2>&1; then
+    echo "s6"; return
+  fi
+  if [[ -d /etc/init.d ]]; then
+    echo "sysv"; return
+  fi
+}
+
+INIT=$(detect_init)
+
+if [[ $# -eq 0 ]]; then
+  echo "$PKG_SYSTEM/$DISTRO/$VERSION-$INIT"
+  exit 0
+fi
+
+# ----------------------------------------------------------------------
+# Hierarchical name translation of package names
+# package/package-system/distro/distro-version
+# ----------------------------------------------------------------------
+declare -A ASSOC_PKG=(
+  [docker/pacman]="docker docker-${INIT}"
   [docker/apt]="docker.io"
 
-  # Virtual / macro package example
-  [build-essential/apt]="build-essential"
   [build-essential/pacman]="base-devel"
   [build-essential/apk]="build-base"
   [build-essential/dnf]="gcc gcc-c++ make"
   [build-essential/xbps]="base-devel"
 
-  # Another example
   [python/apt]="python3"
   [python/apk]="python3"
   [python/dnf]="python3"
 )
 
-set -euo pipefail
+# ----------------------------------------------------------------------
+# Hierarchical name translation of service names
+# service/init-system/distro/distro-version
+# ----------------------------------------------------------------------
+declare -A ASSOC_INIT=(
+)
 
 assoc_translate() {
+  local -n as="$1"
+  shift
   # Build path only from non-empty / non-"unknown" components
   local -a path=()
   local arg
@@ -51,202 +158,255 @@ assoc_translate() {
   for (( i = ${#path[@]}; i > 0; i-- )); do
     printf -v key '%s/' "${path[@]:0:i}"
     key=${key%/}          # remove trailing slash
-    if [[ -v ASSOC[$key] ]]; then
-      printf '%s' "${ASSOC[$key]}"   # ← no newline
+    if [[ -v as[$key] ]]; then
+      printf '%s' "${as[$key]}"   # ← no newline
       return 0
     fi
   done
-
   # Ultimate fallback – always return something
   printf '%s' "$1"
 }
 
-# ----------------------------------------------------------------------
-# Detection
-# ----------------------------------------------------------------------
-detect_pkg_system() {
-  if command -v apt-get >/dev/null 2>&1; then
-    echo "apt"
-  elif command -v pacman >/dev/null 2>&1; then
-    echo "pacman"
-  elif command -v dnf >/dev/null 2>&1; then
-    echo "dnf"
-  elif command -v yum >/dev/null 2>&1; then
-    echo "yum"
-  elif command -v apk >/dev/null 2>&1; then
-    echo "apk"
-  elif command -v xbps-install >/dev/null 2>&1; then
-    echo "xbps"
-  elif command -v zypper >/dev/null 2>&1; then
-    echo "zypper"
-  else
-    echo "unknown"
-  fi
-}
+dry=
+case "${1:-}" in
+  -d|--dry)
+    dry="echo dry: "
+    shift
+    ;;
+esac
 
-detect_distro() {
-  if [[ -f /etc/os-release ]]; then
-    # shellcheck source=/dev/null
-    . /etc/os-release
-    echo "${ID:-unknown}"
-  else
-    echo "unknown"
-  fi
-}
-
-detect_version() {
-  if [[ -f /etc/os-release ]]; then
-    # shellcheck source=/dev/null
-    . /etc/os-release
-    # Prefer VERSION_CODENAME, then VERSION_ID
-    echo "${VERSION_CODENAME:-${VERSION_ID:-unknown}}"
-  else
-    echo "unknown"
-  fi
-}
-
-# ----------------------------------------------------------------------
-# Resolve one logical name → real package name(s)
-# ----------------------------------------------------------------------
-resolve() {
-  local name="$1"
-  local sys="$PKG_SYSTEM"
-  local distro="$DISTRO"
-  local ver="$VERSION"
-
-  assoc_translate "$name" "$sys" "$distro" "$ver"
-}
-
-# ----------------------------------------------------------------------
-# No arguments → show environment
-# ----------------------------------------------------------------------
-if [[ $# -eq 0 ]]; then
-  PKG_SYSTEM=$(detect_pkg_system)
-  DISTRO=$(detect_distro)
-  VERSION=$(detect_version)
-  echo "packaging-system : $PKG_SYSTEM"
-  echo "distro           : $DISTRO"
-  echo "version          : $VERSION"
-  exit 0
-fi
-
-# ----------------------------------------------------------------------
-# Main
-# ----------------------------------------------------------------------
-ACTION="$1"
+ACTION="${1:-}"
 shift || true
 
-PKG_SYSTEM=$(detect_pkg_system)
-DISTRO=$(detect_distro)
-VERSION=$(detect_version)
-
-if [[ "$PKG_SYSTEM" == "unknown" ]]; then
-  echo "pkg: unsupported or undetected packaging system" >&2
-  exit 1
-fi
-
+# Resolve package names (harmless for non-package actions; fallback is identity)
 resolved=()
 for n in "$@"; do
   # Important: use array assignment so multiple packages are split correctly
-  read -ra parts <<< "$(assoc_translate "$n" "$PKG_SYSTEM" "$DISTRO" "$VERSION")"
+  read -ra parts <<< "$(assoc_translate "ASSOC_PKG" "$n" "$PKG_SYSTEM" "$DISTRO" "$VERSION")"
   resolved+=("${parts[@]}")
 done
 
 case "$ACTION" in
-
+  system)
+    echo "$PKG_SYSTEM"
+    ;;
+  init)
+    echo "$INIT"
+    ;;
+  distro)
+    echo "$DISTRO"
+    ;;
+  version)
+    echo "$VERSION"
+    ;;
+  package)
+    echo "${resolved[@]}"
+    ;;
   install)
-    [[ $# -eq 0 ]] && { echo "pkg: install requires at least one package" >&2; exit 1; }
-    
-
+    [[ $# -eq 0 ]] && die "install requires at least one package"
     case "$PKG_SYSTEM" in
-      apt)    apt-get install -y --no-install-recommends "${resolved[@]}" ;;
-      pacman) pacman -S --noconfirm --needed "${resolved[@]}" ;;
-      dnf)    dnf install -y "${resolved[@]}" ;;
-      yum)    yum install -y "${resolved[@]}" ;;
-      apk)    apk add --no-cache "${resolved[@]}" ;;
-      xbps)   xbps-install -y "${resolved[@]}" ;;
-      zypper) zypper --non-interactive install "${resolved[@]}" ;;
+      apt)    $dry apt-get install -y "${resolved[@]}" ;;
+      pacman) $dry pacman -S --noconfirm --needed "${resolved[@]}" ;;
+      dnf)    $dry dnf install -y "${resolved[@]}" ;;
+      yum)    $dry yum install -y "${resolved[@]}" ;;
+      apk)    $dry apk add --no-cache "${resolved[@]}" ;;
+      xbps)   $dry xbps-install -y "${resolved[@]}" ;;
+      zypper) $dry zypper --non-interactive install "${resolved[@]}" ;;
+      *)      die "unsupported package system: ${PKG_SYSTEM:-none}" ;;
     esac
     ;;
-  print)
-    echo "${resolved[@]}";;
-
   remove|uninstall)
-    [[ $# -eq 0 ]] && { echo "pkg: remove requires at least one package" >&2; exit 1; }
-
-    resolved=()
-    for n in "$@"; do
-      # shellcheck disable=SC2207
-      resolved+=( $(resolve "$n") )
-    done
-
+    [[ $# -eq 0 ]] && die "remove requires at least one package"
     case "$PKG_SYSTEM" in
-      apt)    apt-get remove -y "${resolved[@]}" ;;
-      pacman) pacman -R --noconfirm "${resolved[@]}" ;;
-      dnf)    dnf remove -y "${resolved[@]}" ;;
-      yum)    yum remove -y "${resolved[@]}" ;;
-      apk)    apk del "${resolved[@]}" ;;
-      xbps)   xbps-remove -y "${resolved[@]}" ;;
-      zypper) zypper --non-interactive remove "${resolved[@]}" ;;
+      apt)    $dry apt-get remove -y "${resolved[@]}" ;;
+      pacman) $dry pacman -R --noconfirm "${resolved[@]}" ;;
+      dnf)    $dry dnf remove -y "${resolved[@]}" ;;
+      yum)    $dry yum remove -y "${resolved[@]}" ;;
+      apk)    $dry apk del "${resolved[@]}" ;;
+      xbps)   $dry xbps-remove -y "${resolved[@]}" ;;
+      zypper) $dry zypper --non-interactive remove "${resolved[@]}" ;;
+      *)      die "unsupported package system: ${PKG_SYSTEM:-none}" ;;
     esac
     ;;
-
   update)
     case "$PKG_SYSTEM" in
-      apt)    apt-get update -qq ;;
-      pacman) pacman -Sy --noconfirm ;;
-      dnf)    dnf check-update || true ;;
-      yum)    yum check-update || true ;;
-      apk)    apk update ;;
-      xbps)   xbps-install -S ;;
-      zypper) zypper refresh ;;
+      apt)    $dry apt-get update -qq ;;
+      pacman) $dry pacman -Sy --noconfirm ;;
+      dnf)    $dry dnf check-update || true ;;
+      yum)    $dry yum check-update || true ;;
+      apk)    $dry apk update ;;
+      xbps)   $dry xbps-install -S ;;
+      zypper) $dry zypper refresh ;;
+      *)      die "unsupported package system: ${PKG_SYSTEM:-none}" ;;
     esac
     ;;
-
   upgrade)
     case "$PKG_SYSTEM" in
       apt)
         if [[ $# -gt 0 ]]; then
-          resolved=()
-          for n in "$@"; do resolved+=( $(resolve "$n") ); done
-          apt-get install -y --only-upgrade "${resolved[@]}"
+          $dry apt-get install -y --only-upgrade "${resolved[@]}"
         else
-          apt-get upgrade -y
+          $dry apt-get upgrade -y
         fi
         ;;
       pacman)
         if [[ $# -gt 0 ]]; then
-          resolved=()
-          for n in "$@"; do resolved+=( $(resolve "$n") ); done
-          pacman -S --noconfirm "${resolved[@]}"
+          $dry pacman -S --noconfirm "${resolved[@]}"
         else
-          pacman -Su --noconfirm
+          $dry pacman -Su --noconfirm
         fi
         ;;
       dnf|yum)
         if [[ $# -gt 0 ]]; then
-          resolved=()
-          for n in "$@"; do resolved+=( $(resolve "$n") ); done
-          $PKG_SYSTEM upgrade -y "${resolved[@]}"
+          $dry $PKG_SYSTEM upgrade -y "${resolved[@]}"
         else
-          $PKG_SYSTEM upgrade -y
+          $dry $PKG_SYSTEM upgrade -y
         fi
         ;;
       apk)
-        apk upgrade
+        $dry apk upgrade
         ;;
       xbps)
-        xbps-install -u
+        $dry xbps-install -u
         ;;
       zypper)
-        zypper --non-interactive update
+        $dry zypper --non-interactive update
+        ;;
+      *)
+        die "unsupported package system: ${PKG_SYSTEM:-none}"
         ;;
     esac
     ;;
+  start|stop|restart|status|enable|disable)
+    [[ $# -eq 0 ]] && die "$ACTION requires at least one service"
 
+    for NAME in "$@"; do
+      case "$INIT" in
+        systemd)
+          NAME_SYSTEMD="${NAME%.service}"
+          case "$ACTION" in
+            start)    $dry systemctl start   "$NAME_SYSTEMD" ;;
+            stop)     $dry systemctl stop    "$NAME_SYSTEMD" ;;
+            restart)  $dry systemctl restart "$NAME_SYSTEMD" ;;
+            status)   $dry systemctl --no-pager --full status "$NAME_SYSTEMD" ;;
+            enable)   $dry systemctl enable  "$NAME_SYSTEMD" ;;
+            disable)  $dry systemctl disable "$NAME_SYSTEMD" ;;
+          esac
+          ;;
+        openrc)
+          case "$ACTION" in
+            start)    $dry rc-service "$NAME" start ;;
+            stop)     $dry rc-service "$NAME" stop ;;
+            restart)  $dry rc-service "$NAME" restart ;;
+            status)   $dry rc-service "$NAME" status ;;
+            enable)   $dry rc-update add "$NAME" default ;;
+            disable)  $dry rc-update del "$NAME" default ;;
+          esac
+          ;;
+        runit)
+          if [[ -d /var/service ]]; then
+            SVDIR=/var/service
+            SVSRC=/etc/sv
+          elif [[ -d /run/runit/service ]]; then
+            SVDIR=/run/runit/service
+            SVSRC=/etc/runit/sv
+          else
+            die "cannot find runit service directory"
+          fi
+          case "$ACTION" in
+            start)    $dry sv up   "$NAME" ;;
+            stop)     $dry sv down "$NAME" ;;
+            restart)  $dry sv restart "$NAME" ;;
+            status)   $dry sv status "$NAME" ;;
+            enable)
+              if [[ -n $dry ]]; then
+                echo "dry: ln -sf $SVSRC/$NAME $SVDIR/"
+              else
+                [[ -d "$SVSRC/$NAME" ]] || die "service definition not found in $SVSRC/$NAME"
+                ln -sf "$SVSRC/$NAME" "$SVDIR/"
+              fi
+              ;;
+            disable)
+              $dry rm -f "$SVDIR/$NAME"
+              ;;
+          esac
+          ;;
+        dinit)
+          case "$ACTION" in
+            start)    $dry dinitctl start   "$NAME" ;;
+            stop)     $dry dinitctl stop    "$NAME" ;;
+            restart)  $dry dinitctl restart "$NAME" 2>/dev/null || { dinitctl stop "$NAME"; dinitctl start "$NAME"; } ;;
+            status)   $dry dinitctl status  "$NAME" ;;
+            enable)   $dry dinitctl enable  "$NAME" ;;
+            disable)  $dry dinitctl disable "$NAME" ;;
+          esac
+          ;;
+        s6)
+          if ! command -v s6-rc >/dev/null 2>&1; then
+            die "s6-rc not found – limited support"
+          fi
+          case "$ACTION" in
+            start)    $dry s6-rc -u change "$NAME" ;;
+            stop)     $dry s6-rc -d change "$NAME" ;;
+            restart)
+              if [[ -n $dry ]]; then
+                echo "dry: s6-rc -d change $NAME ; s6-rc -u change $NAME"
+              else
+                s6-rc -d change "$NAME"
+                s6-rc -u change "$NAME"
+              fi
+              ;;
+            status)
+              if [[ -n $dry ]]; then
+                echo "dry: s6-rc -l change 2>/dev/null | grep -E \"(^| )$NAME( |$)\""
+              else
+                s6-rc -l change 2>/dev/null | grep -E "(^| )$NAME( |$)" || echo "$NAME: unknown"
+              fi
+              ;;
+            enable|disable)
+              echo "service: enable/disable on pure s6-rc requires database recompile." >&2
+              exit 1
+              ;;
+          esac
+          ;;
+        sysv)
+          SCRIPT="/etc/init.d/$NAME"
+          case "$ACTION" in
+            start|stop|restart|status)
+              if [[ -z $dry ]]; then
+                [[ -x "$SCRIPT" ]] || die "no init script: $SCRIPT"
+              fi
+              $dry "$SCRIPT" "$ACTION"
+              ;;
+            enable)
+              if command -v update-rc.d >/dev/null 2>&1; then
+                $dry update-rc.d "$NAME" defaults
+              elif command -v chkconfig >/dev/null 2>&1; then
+                $dry chkconfig "$NAME" on
+              else
+                die "cannot enable (no update-rc.d / chkconfig)"
+              fi
+              ;;
+            disable)
+              if command -v update-rc.d >/dev/null 2>&1; then
+                $dry update-rc.d "$NAME" remove
+              elif command -v chkconfig >/dev/null 2>&1; then
+                $dry chkconfig "$NAME" off
+              else
+                die "cannot disable"
+              fi
+              ;;
+          esac
+          ;;
+        *)
+          die "unsupported or undetected init system: ${INIT:-none}"
+          ;;
+      esac
+    done
+    ;;
   *)
-    echo "pkg: unknown action '$ACTION'" >&2
-    echo "Usage: pkg [install|remove|update|upgrade] ..." >&2
-    exit 1
+    die "unsupported action: $ACTION"
     ;;
 esac
+
+exit 0
