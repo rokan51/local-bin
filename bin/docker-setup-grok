@@ -1,41 +1,77 @@
 #!/usr/bin/env bash
 # ----------------------------------------------------------
-# Required environment variables for docker-setup
+# Wrapper that prepares a Grok-oriented C++ / agentic build
+# environment using docker-setup + pkg.
+# ----------------------------------------------------------
 
-# Name of service
+set -euo pipefail
+
+# Name of the service / container
 export DOCKER_SERVICE_NAME=grok
 
-# Linux distribution for image
+# Base directory for this service’s files
+export DOCKER_SERVICE_ROOT="${HOME}/Private/docker/${DOCKER_SERVICE_NAME}"
+
+# Image base
 export DOCKER_DISTRIBUTION="ubuntu:latest"
 
-# Location of docker service files 
-DOCKER_COMPOSE_ROOT="$HOME/Private/docker/$DOCKER_SERVICE_NAME"
+# ------------------------------------------------------------------
+# Prepare directory and fetch the two helper scripts
+# ------------------------------------------------------------------
+mkdir -p "$DOCKER_SERVICE_ROOT/bin"
 
+curl -fsSL "https://raw.githubusercontent.com/rokan51/local-bin/refs/heads/main/bin/pkg" \
+     -o "$DOCKER_SERVICE_ROOT/bin/pkg"
+chmod +x "$DOCKER_SERVICE_ROOT/bin/pkg"
 
+curl -fsSL "https://raw.githubusercontent.com/rokan51/local-bin/refs/heads/main/bin/docker-setup" \
+     -o "$DOCKER_SERVICE_ROOT/bin/docker-setup"
+chmod +x "$DOCKER_SERVICE_ROOT/bin/docker-setup"
 
-# ------------------ preparation: downloading third-party tools like docker-setup and pkg unifying abstraction -----
+# Make them available for the rest of this script
+export PATH="$DOCKER_SERVICE_ROOT/bin:$PATH"
 
-mkdir -p "$DOCKER_COMPOSE_ROOT"
+# ------------------------------------------------------------------
+# Host-side Docker installation (uses pkg abstraction)
+# ------------------------------------------------------------------
+pkg update
+pkg upgrade
+# “docker” is mapped by pkg; compose/buildx packages vary by distro.
+# On Ubuntu/Debian the v2 plugin is usually docker-compose-plugin.
+pkg install docker docker-compose-plugin docker-buildx-plugin || \
+pkg install docker docker-compose docker-buildx || true
 
-# Download pkg abstraction and docker-setup to bin
-mkdir -p "$DOCKER_COMPOSE_ROOT/bin"
-curl -fsSL "https://raw.githubusercontent.com/rokan51/local-bin/refs/heads/main/bin/pkg" -o "$DOCKER_COMPOSE_ROOT/bin/pkg" && chmod +x "$DOCKER_COMPOSE_ROOT/bin/pkg"
-curl -fsSL "https://raw.githubusercontent.com/rokan51/local-bin/refs/heads/main/bin/docker-setup" -o "$DOCKER_COMPOSE_ROOT/bin/pkg" && chmod +x "$DOCKER_COMPOSE_ROOT/bin/docker-setup"
+pkg enable docker
+pkg start docker
 
+# ------------------------------------------------------------------
+# Dockerfile instructions (run as root inside the image)
+# ------------------------------------------------------------------
+COPY_FILES='COPY --chmod=755 ./bin/* /usr/local/bin/'
 
+INSTALL_PACKAGES='RUN pkg update && pkg install \
+  ca-certificates curl wget git \
+  build-essential gcc g++ gdb clang lld lldb \
+  cmake ninja-build pkg-config \
+  vim nano mc htop tmux \
+  ripgrep fd-find jq valgrind ccache \
+  doxygen graphviz \
+  python3 python3-pip \
+  software-properties-common'
 
-# ------------------ Install and start docker tools in host ------------------------------
-pkg update && pkg upgrade && pkg install docker docker compose docker-buildx && pkg enable docker && pkg start docker
+# xmake is not always in the default Ubuntu repos – install via its official script
+INSTALL_XMAKE='RUN curl -fsSL https://xmake.io/shget.text | bash'
 
-# ------------------- building DOCKERFILE_INSTRUCTIONS ----------------------------
-COPY_FILES="COPY --chmod=755 ./bin/* /usr/local/bin/"
-INSTALL_PACKAGES="RUN pkg install ca-certificates curl wget git build-essential gcc g++ gdb clang lld lldb cmake ninja-build pkg-config vim \
-                  nano mc htop tmux ripgrep fd-find jq valgrind ccache doxygen graphviz python3 python3-pip software-properties-common xmake"
-                     
-INSTALL_GROK="RUN curl -fsSL https://x.ai/cli/install.sh | bash  && if [ -x /root/.local/bin/grok ]; then cp /root/.local/bin/grok /usr/local/bin/grok; fi || true"
+INSTALL_GROK='RUN curl -fsSL https://x.ai/cli/install.sh | bash \
+  && if [ -x /root/.local/bin/grok ]; then cp /root/.local/bin/grok /usr/local/bin/grok; fi || true'
 
-export DOCKERFILE_INSTRUCTIONS="$COPY_FILES"$'\n'"$INSTALL_PACKAGES"$'\n'"$INSTALL_GROK"
+export DOCKERFILE_INSTRUCTIONS="${COPY_FILES}
+${INSTALL_PACKAGES}
+${INSTALL_XMAKE}
+${INSTALL_GROK}"
 
-# Now cd to service directory and run docker-setup
-cd "$DOCKER_COMPOSE_ROOT" 
+# ------------------------------------------------------------------
+# Hand off to the generic docker-setup
+# ------------------------------------------------------------------
+cd "$DOCKER_SERVICE_ROOT"
 docker-setup

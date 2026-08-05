@@ -1,86 +1,65 @@
 #!/usr/bin/env bash
 # =============================================================================
-# docker-setup  (should be re-run tolerant as the caller is)
-# It supposed to crease a docker-contained service with installed service purpose like agentic grok-build,
-# it is focused on C++ development, but should be easily modified. It ises "pkg" abstraction at
-# Host and guest systems should be linux but in general should be distro agnostic 
+# docker-setup  (re-run tolerant)
+# Creates a Docker-contained development service.
+# Uses the "pkg" abstraction. Host and guest are expected to be Linux.
 # =============================================================================
 
+set -euo pipefail
+
+die()  { echo "docker-setup: $*" >&2; exit 1; }
+info() { echo "→ $*"; }
+step() { echo "==> $*"; }
+
 # ---------------------------------------------------------------------------
-# Configuration
+# Required variables
 # ---------------------------------------------------------------------------
+[[ -n "${DOCKER_SERVICE_NAME:-}" ]] || die "DOCKER_SERVICE_NAME must be defined"
+[[ -n "${DOCKER_SERVICE_ROOT:-}" ]] || die "DOCKER_SERVICE_ROOT must be defined"
 
-# DOCKER_SERVICE_NAME must be defined
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+: "${DOCKER_DISTRIBUTION:=ubuntu:latest}"
+: "${DOCKER_MEM_LIMIT:=8g}"
+: "${DOCKER_CPU_RATIO:=0.33}"
+: "${DOCKER_IMAGE_NAME:=${DOCKER_SERVICE_NAME}}"
+: "${DOCKER_CONTAINER_NAME:=${DOCKER_SERVICE_NAME}}"
+: "${DOCKER_USER:=${DOCKER_SERVICE_NAME}}"
+: "${DOCKER_GROUP:=${DOCKER_USER}}"
+: "${DOCKER_USER_ID:=$(id -u)}"
+: "${DOCKER_GROUP_ID:=$(id -g)}"
+: "${DOCKER_SHARE:=share-ro}"
+: "${DOCKERFILE_INSTRUCTIONS:=}"
 
-if [[ "$DOCKER_SERVICE_NAME" == "" ]] ; then
-  echo "You have to define DOCKER_SERVICE_NAME variable"
-fi
-
-
-if [[ "$DOCKER_SERVICE_ROOT" == "" ]] ; then
-  echo "You have to define DOCKER_SERVICE_ROOT variable"
-
-# Linux distribution image
-DOCKER_DISTRIBUTION="ubuntu:latest"        # current Ubuntu LTS
-
-# ------------  Further configuration: if not defined, reasonable defaults are set ---------------------------
-
-if [[ "$DOCKER_MEM_LIMIT" == "" ]] ; then
-  DOCKER_MEM_LIMIT="8g"
-fi
-if [[ "$DOCKER_CPU_RATIO" == "" ]] ; then
-  DOCKER_CPU_RATIO="0.33"          # of host logical cores, rounded down, min 1
-fi
-if [[ "$DOCKER_IMAGE_NAME" == "" ]] ; then
-  DOCKER_IMAGE_NAME="${DOCKER_SERVICE_NAME}"
-fi
-DOCKER_CONTAINER_NAME="${DOCKER_SERVICE_NAME}"
-if [[ "$DOCKER_USER" == "" ]] ; then
-  DOCKER_USER="${DOCKER_SERVICE_NAME}"
-fi
-if [[ "$DOCKER_GROUP" == "" ]] ; then
-  DOCKER_GROUP="$(DOCKER_USER)"
-fi
-if [[ "$DOCKER_USER_ID"== "" ]] ; then
-  DOCKER_USER_ID="$(id -u $USER)"
-fi
-if [[ "$DOCKER_GROUP_ID"== "" ]] ; then
-  DOCKER_GROUP_ID="$(id -g $USER)"
-fi
-
-if [[ "$DOCKER_SHARE"== "" ]] ; then
-  "$DOCKER_SHARE"== "home/share-ro" 
-fi 
-
+DOCKER_SERVICE_ROOT=$(realpath -m "$DOCKER_SERVICE_ROOT")
 mkdir -p "$DOCKER_SERVICE_ROOT"
 cd "$DOCKER_SERVICE_ROOT"
 
 # ---------------------------------------------------------------------------
-# Shared directories
+# Shared directories (host side)
 # ---------------------------------------------------------------------------
-echo "Creating Shared directories"
+step "Creating shared directories"
 
-mkdir -p "$DOCKER_SERVICE_ROOT/$DOCKER_USER" # creates also parents
-chmod 2775 $DOCKER_SERVICE_ROOT/$DOCKER_USER"          # rwxrwsr-x
-mkdir -p "$DOCKER_SERVICE_ROOT/$DOCKER_USER/.local/bin" # creates also parents
+mkdir -p "$DOCKER_SERVICE_ROOT/$DOCKER_USER"
+chmod 2775 "$DOCKER_SERVICE_ROOT/$DOCKER_USER"          # rwxrwsr-x
+
+mkdir -p "$DOCKER_SERVICE_ROOT/$DOCKER_USER/.local/bin"
 
 mkdir -p "$DOCKER_SERVICE_ROOT/$DOCKER_SHARE"
-chmod 2755 "$DOCKER_SERVICE_ROOT/$DOCKER_SHARE"           # rwxr-s-r-x (group no write)
-
+chmod 2755 "$DOCKER_SERVICE_ROOT/$DOCKER_SHARE"         # rwxr-sr-x
 
 # ---------------------------------------------------------------------------
-# CPU limit calculation
+# CPU limit
 # ---------------------------------------------------------------------------
 NCPU=$(nproc)
 DOCKER_CPU_LIMIT=$(awk -v n="$NCPU" -v r="$DOCKER_CPU_RATIO" 'BEGIN {
-    c = int(n * r);
-    if (c < 1) c = 1;
-    print c
+    c = int(n * r); if (c < 1) c = 1; print c
 }')
 info "Resource limits → memory: $DOCKER_MEM_LIMIT   cpus: $DOCKER_CPU_LIMIT (of $NCPU)"
 
 # ---------------------------------------------------------------------------
-# Generate Dockerfile
+# Dockerfile
 # ---------------------------------------------------------------------------
 step "Writing Dockerfile"
 
@@ -88,22 +67,21 @@ cat > "$DOCKER_SERVICE_ROOT/Dockerfile" << EOF
 FROM ${DOCKER_DISTRIBUTION}
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
-
-# Installing user
-RUN groupadd --gid ${DOCKER_GROUP_ID} DOCKER_GROUP \\
+# Create matching user/group
+RUN groupadd --gid ${DOCKER_GROUP_ID} ${DOCKER_GROUP} \\
  && useradd  --uid ${DOCKER_USER_ID} --gid ${DOCKER_GROUP_ID} \\
              --home-dir /home/${DOCKER_USER} --no-create-home \\
              --shell /bin/bash ${DOCKER_USER} \\
  && mkdir -p /home/${DOCKER_USER} \\
- && chown ${DOCKER_USER}:${DOCKER_GROUP_ID} /home/${DOCKER_USER}
- 
-# Passwordless sudo
-RUN echo "${DOCKER_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${DOCKER_USER} && chmod 0440 /etc/sudoers.d/${DOCKER_USER}
+ && chown ${DOCKER_USER}:${DOCKER_GROUP} /home/${DOCKER_USER}
 
-#Installing specific components
+# Passwordless sudo
+RUN echo "${DOCKER_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${DOCKER_USER} \\
+ && chmod 0440 /etc/sudoers.d/${DOCKER_USER}
+
+# Service-specific instructions (provided by the caller)
 ${DOCKERFILE_INSTRUCTIONS}
 
-# Default environment
 USER ${DOCKER_USER}
 WORKDIR /home/${DOCKER_USER}
 ENV HOME=/home/${DOCKER_USER}
@@ -112,9 +90,10 @@ CMD ["sleep", "infinity"]
 EOF
 
 # ---------------------------------------------------------------------------
-#  Generate docker-compose.yml
+# docker-compose.yml
 # ---------------------------------------------------------------------------
-echo "Writing docker-compose.yml"
+step "Writing docker-compose.yml"
+
 cat > "$DOCKER_SERVICE_ROOT/docker-compose.yml" << EOF
 services:
   ${DOCKER_SERVICE_NAME}:
@@ -122,9 +101,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        DOCKER_USER_ID: ${DOCKER_USER_ID}
-        DOCKER_GROUP_ID: ${DOCKER_GROUP_ID}
     container_name: ${DOCKER_CONTAINER_NAME}
     user: "${DOCKER_USER_ID}:${DOCKER_GROUP_ID}"
     mem_limit: ${DOCKER_MEM_LIMIT}
@@ -140,54 +116,49 @@ services:
 EOF
 
 # ---------------------------------------------------------------------------
-#    Build the image
-#    Try to run under the docker group so the script can finish in one go.
+# Build
 # ---------------------------------------------------------------------------
-echo "Building Docker image '${DOCKER_IMAGE_NAME}'"
+step "Building image '${DOCKER_IMAGE_NAME}'"
 
 if docker info &>/dev/null; then
-    # Current session already has docker access
-    docker compose build --no-cache
+  docker compose build --no-cache
 else
-    # Try to elevate with the docker group for this command only
-    if command -v sg &>/dev/null; then
-        echo "Current session lacks docker group – running build via 'sg docker'..."
-        sg docker -c "cd '$DOCKER_SERVICE_ROOT' && docker compose build --no-cache"
-    else
-        echo "Cannot talk to Docker daemon from this shell."
-        echo "Please run the following and then re-execute this script:"
-        echo
-        echo "    newgrp docker"
-        echo "    docker-setup <service>"
-        echo
-        exit 1
-    fi
+  if command -v sg &>/dev/null; then
+    info "No docker access in current session – elevating with 'sg docker'"
+    sg docker -c "cd '$DOCKER_SERVICE_ROOT' && docker compose build --no-cache"
+  else
+    die "Cannot talk to Docker daemon.
+Please run:
+    newgrp docker
+    # then re-execute the setup script"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
-#  Final message
+# Done
 # ---------------------------------------------------------------------------
 cat << EOF
- ====================================================================
-           Grok Build Docker environment is ready!
- ====================================================================
 
-  Next steps (when current directory is ${DOCKER_SERVICE_ROOT}):
+====================================================================
+  Docker environment for '${DOCKER_SERVICE_NAME}' is ready
+====================================================================
 
-  0. Create & run  container - once only! (to destroy: docker compose down)
+Next steps (from ${DOCKER_SERVICE_ROOT}):
+
+  0. Create & start the container (once):
        docker compose up -d
-  
-  1. Start service
-       docker compose start
 
-  2. Enter an interactive shell:
+  1. Enter an interactive shell:
        docker compose exec ${DOCKER_SERVICE_NAME} bash -l
 
-  3. After exit, stop service:
+  2. Stop / start later:
        docker compose stop
- 
+       docker compose start
 
-Resources:  ${DOCKER_MEM_LIMIT} RAM, ${DOCKER_CPU_LIMIT} CPUs
+  3. Destroy everything:
+       docker compose down
+
+Resources : ${DOCKER_MEM_LIMIT} RAM, ${DOCKER_CPU_LIMIT} CPUs
 Passwordless sudo is enabled inside the container.
 Docker socket is intentionally NOT mounted.
 
