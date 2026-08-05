@@ -5,29 +5,37 @@
 # Name of service
 export DOCKER_SERVICE_NAME=grok
 
-# Location of docker service files 
-export DOCKER_COMPOSE_ROOT="$HOME/Private/docker/$DOCKER_SERVICE_NAME"
-
 # Linux distribution for image
 export DOCKER_DISTRIBUTION="ubuntu:latest"
+
+# Location of docker service files 
+DOCKER_COMPOSE_ROOT="$HOME/Private/docker/$DOCKER_SERVICE_NAME"
+
 
 
 # ------------------ preparation: downloading third-party tools like docker-setup and pkg unifying abstraction -----
 
-# Download pkg abstraction to location PKG
-mkdir -p "$DOCKER_COMPOSE_ROOT/bin"
-PKG="/bin/pkg"
-sudo curl -fsSL "https://raw.githubusercontent.com/rokan51/local-bin/refs/heads/main/bin/pkg" -o "$PKG" && 
+mkdir -p "$DOCKER_COMPOSE_ROOT"
 
-# ------------------ Install and start docker tools to host ------------------------------
+# Download pkg abstraction and docker-setup to bin
+mkdir -p "$DOCKER_COMPOSE_ROOT/bin"
+curl -fsSL "https://raw.githubusercontent.com/rokan51/local-bin/refs/heads/main/bin/pkg" -o "$DOCKER_COMPOSE_ROOT/bin/pkg" && chmod +x "$DOCKER_COMPOSE_ROOT/bin/pkg"
+curl -fsSL "https://raw.githubusercontent.com/rokan51/local-bin/refs/heads/main/bin/docker-setup" -o "$DOCKER_COMPOSE_ROOT/bin/pkg" && chmod +x "$DOCKER_COMPOSE_ROOT/bin/docker-setup"
+
+
+
+# ------------------ Install and start docker tools in host ------------------------------
 pkg update && pkg upgrade && pkg install docker docker compose docker-buildx && pkg enable docker && pkg start docker
 
 # ------------------- building DOCKERFILE_INSTRUCTIONS ----------------------------
-COPY_FILES="COPY --chmod=755 pkg /usr/local/bin/pkg"
+COPY_FILES="COPY --chmod=755 ./bin/* /usr/local/bin/"
 INSTALL_PACKAGES="RUN pkg install ca-certificates curl wget git build-essential gcc g++ gdb clang lld lldb cmake ninja-build pkg-config vim \
                   nano mc htop tmux ripgrep fd-find jq valgrind ccache doxygen graphviz python3 python3-pip software-properties-common xmake"
                      
 INSTALL_GROK="RUN curl -fsSL https://x.ai/cli/install.sh | bash  && if [ -x /root/.local/bin/grok ]; then cp /root/.local/bin/grok /usr/local/bin/grok; fi || true"
 
-
 export DOCKERFILE_INSTRUCTIONS="$COPY_FILES"$'\n'"$INSTALL_PACKAGES"$'\n'"$INSTALL_GROK"
+
+# Now cd to service directory and run docker-setup
+cd "$DOCKER_COMPOSE_ROOT" 
+docker-setup
