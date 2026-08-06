@@ -3,7 +3,7 @@
 # Requires Bash ≥ 4.3
 #
 # Usage:
-#   pkg                          → show detected packaging system + distro
+#   pkg                          → show detected packaging-system/distro/version init-system
 #
 #   pkg system                   shows native packaging system (apt/pacman/..)
 #   pkg distro                   shows name of distribution
@@ -25,8 +25,51 @@
 #   pkg [options] enable  <service...>       add service to default level
 #   pkg [options] disable <service...>       remove service from default level
 #
-# Currently the only option is -d or --dry: it prints the command instead of execution
+# Currently the only option is -d or --dry: it prints the command s instead of executing it
 
+# ----------------------------------------------------------------------
+# Hierarchical name translation of package names according to 
+# package/package-system/distro/distro-version
+# The resolving wors such as it tries to find most-specific (longest) definition,
+# if not foundlooks for more general (shorter) one. If no association  found it uses 
+# original (most common) name.
+# ----------------------------------------------------------------------
+init_assoc_pkg() {
+  declare -gA ASSOC_PKG=(
+    # Full Docker stack (daemon + compose v2 + buildx)
+    [docker-meta/apt]="docker.io docker-compose-plugin docker-buildx-plugin"
+    [docker-meta/pacman]="docker docker-compose docker-buildx"
+    [docker-meta/pacman/artix]="docker docker-${INIT} docker-compose docker-buildx"
+    [docker-meta/dnf]="docker docker-compose docker-buildx"
+    [docker-meta/yum]="docker docker-compose docker-buildx"
+    [docker-meta/apk]="docker docker-cli-compose"          # buildx may vary
+    [docker-meta/xbps]="docker docker-compose"
+    [docker-meta/zypper]="docker docker-compose docker-buildx"
+    # ultimate fallback
+    [docker-meta]="docker"
+
+    [build-essential/pacman]="base-devel"
+    [build-essential/apk]="build-base"
+    [build-essential/dnf]="gcc gcc-c++ make"
+    [build-essential/xbps]="base-devel"
+
+    [python/apt]="python3"
+    [python/apk]="python3"
+    [python/dnf]="python3"
+  )
+}
+
+# ----------------------------------------------------------------------
+# Hierarchical name translation of service names
+# service/init-system/distro/distro-version
+# Similar as above but instead of package name as a base a service name is used
+# ----------------------------------------------------------------------
+init_assoc_init() {
+  declare -A ASSOC_INIT=(
+  )
+}
+
+#########################################################################################################
 set -euo pipefail
 
 die() {
@@ -114,34 +157,14 @@ detect_init() {
 INIT=$(detect_init)
 
 if [[ $# -eq 0 ]]; then
-  echo "$PKG_SYSTEM/$DISTRO/$VERSION-$INIT"
+  echo "$PKG_SYSTEM/$DISTRO/$VERSION $INIT"
   exit 0
 fi
 
-# ----------------------------------------------------------------------
-# Hierarchical name translation of package names
-# package/package-system/distro/distro-version
-# ----------------------------------------------------------------------
-declare -A ASSOC_PKG=(
-  [docker/pacman]="docker docker-${INIT}"
-  [docker/apt]="docker.io"
 
-  [build-essential/pacman]="base-devel"
-  [build-essential/apk]="build-base"
-  [build-essential/dnf]="gcc gcc-c++ make"
-  [build-essential/xbps]="base-devel"
+init_assoc_pkg
+init_assoc_init
 
-  [python/apt]="python3"
-  [python/apk]="python3"
-  [python/dnf]="python3"
-)
-
-# ----------------------------------------------------------------------
-# Hierarchical name translation of service names
-# service/init-system/distro/distro-version
-# ----------------------------------------------------------------------
-declare -A ASSOC_INIT=(
-)
 
 assoc_translate() {
   local -n as="$1"

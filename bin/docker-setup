@@ -32,9 +32,25 @@ step() { echo "==> $*"; }
 : "${DOCKER_SHARE:=share-ro}"
 : "${DOCKERFILE_INSTRUCTIONS:=}"
 
+
+
 DOCKER_SERVICE_ROOT=$(realpath -m "$DOCKER_SERVICE_ROOT")
 mkdir -p "$DOCKER_SERVICE_ROOT"
 cd "$DOCKER_SERVICE_ROOT"
+
+# ---------------------------------------------------------------------------
+# Installing tools...
+#----------------------------------------------------------------------------
+
+mkdir -p "$DOCKER_SERVICE_ROOT/bin"
+
+curl -fsSL "https://raw.githubusercontent.com/rokan51/local-bin/refs/heads/main/bin/pkg" \
+     -o "$DOCKER_SERVICE_ROOT/bin/pkg"
+chmod +x "$DOCKER_SERVICE_ROOT/bin/pkg"
+
+# Make them available for the rest of this script
+export PATH="$DOCKER_SERVICE_ROOT/bin:$PATH"
+
 
 # ---------------------------------------------------------------------------
 # Shared directories (host side)
@@ -68,16 +84,25 @@ FROM ${DOCKER_DISTRIBUTION}
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 # Create matching user/group
-RUN groupadd --gid ${DOCKER_GROUP_ID} ${DOCKER_GROUP} \\
- && useradd  --uid ${DOCKER_USER_ID} --gid ${DOCKER_GROUP_ID} \\
-             --home-dir /home/${DOCKER_USER} --no-create-home \\
-             --shell /bin/bash ${DOCKER_USER} \\
- && mkdir -p /home/${DOCKER_USER} \\
- && chown ${DOCKER_USER}:${DOCKER_GROUP} /home/${DOCKER_USER}
+RUN set -eux;\\
+  if getent passwd ${DOCKER_USER_ID} >/dev/null; then \\
+        userdel -r "$(getent passwd ${DOCKER_USER_ID} | cut -d: -f1)" || true; \\
+  fi; \\
+  if getent group ${DOCKER_GROUP_ID} >/dev/null; then \\
+    groupdel "$(getent group ${DOCKER_GROUP_ID} | cut -d: -f1)" || true; \\
+  fi; \\
+  groupadd --gid ${DOCKER_GROUP_ID} ${DOCKER_GROUP} \\
+  && useradd  --uid ${DOCKER_USER_ID} --gid ${DOCKER_GROUP_ID} \\
+              --home-dir /home/${DOCKER_USER} --no-create-home \\
+              --shell /bin/bash ${DOCKER_USER} \\
+  && mkdir -p /home/${DOCKER_USER} \\
+  && chown ${DOCKER_USER}:${DOCKER_GROUP} /home/${DOCKER_USER}
 
 # Passwordless sudo
 RUN echo "${DOCKER_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${DOCKER_USER} \\
  && chmod 0440 /etc/sudoers.d/${DOCKER_USER}
+ 
+COPY --chmod=755 ./bin/* /usr/local/bin/
 
 # Service-specific instructions (provided by the caller)
 ${DOCKERFILE_INSTRUCTIONS}
@@ -118,21 +143,71 @@ EOF
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Build (with automatic docker-group handling)
+# ---------------------------------------------------------------------------
 step "Building image '${DOCKER_IMAGE_NAME}'"
 
-if docker info &>/dev/null; then
+ensure_host_docker() {
+  if command -v docker >/dev/null 2>&1 && docker info &>/dev/null; then
+    info "Docker is already usable on the host."
+    return 0
+  fi
+
+  info "Docker not usable on host – installing via pkg …"
+
+  # pkg must be on PATH (the calling wrapper normally puts the downloaded
+  # copy there, or the user has it installed system-wide)
+  command -v pkg >/dev/null 2>&1 || die "pkg not found on PATH"
+
+  sudo pkg update
+  # upgrade is optional and can be slow; omit or make it configurable
+  # sudo pkg upgrade
+  sudo pkg install docker-meta
+  sudo pkg enable docker
+  sudo pkg start docker
+}
+
+ensure_host_docker
+
+ensure_docker_access() {
+  # Already works?
+  if docker info &>/dev/null; then
+    return 0
+  fi
+
+  # Not a member of the docker group?
+  if ! groups | grep -q '\bdocker\b'; then
+    info "Current user ($USER) is not in the 'docker' group."
+    if sudo -n true 2>/dev/null || sudo -v; then
+      sudo usermod -aG docker "$USER"
+      info "Added $USER to the docker group."
+    else
+      die "Need sudo privileges to add $USER to the docker group."
+    fi
+  fi
+
+  # Group membership is updated, but the current shell does not see it yet.
+  # Prefer 'sg' so we can finish the build without forcing a re-login.
+  if command -v sg >/dev/null 2>&1; then
+    info "Using 'sg docker' for this build (new group membership not yet active in this shell)."
+    return 1          # tell caller to use sg
+  fi
+
+  die "Docker group membership was updated, but this shell still cannot talk to the daemon.
+    Please run:
+       newgrp docker
+   (or log out and back in) and then re-execute the setup script."
+}
+
+if ensure_docker_access; then
   docker compose build --no-cache
 else
-  if command -v sg &>/dev/null; then
-    info "No docker access in current session – elevating with 'sg docker'"
-    sg docker -c "cd '$DOCKER_SERVICE_ROOT' && docker compose build --no-cache"
-  else
-    die "Cannot talk to Docker daemon.
-Please run:
-    newgrp docker
-    # then re-execute the setup script"
-  fi
+  # ensure_docker_access returned 1 → use sg
+  sg docker -c "cd '$DOCKER_SERVICE_ROOT' && docker compose build --no-cache"
 fi
+
+
 
 # ---------------------------------------------------------------------------
 # Done

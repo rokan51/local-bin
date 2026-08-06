@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # ----------------------------------------------------------
 # Wrapper that prepares a Grok-oriented C++ / agentic build
-# environment using docker-setup + pkg.
+# environment using docker-setup
 # ----------------------------------------------------------
 
-set -euo pipefail
 
 # Name of the service / container
 export DOCKER_SERVICE_NAME=grok
@@ -16,33 +15,15 @@ export DOCKER_SERVICE_ROOT="${HOME}/Private/docker/${DOCKER_SERVICE_NAME}"
 export DOCKER_DISTRIBUTION="ubuntu:latest"
 
 # ------------------------------------------------------------------
-# Prepare directory and fetch the two helper scripts
+# Fetch docker-setup
 # ------------------------------------------------------------------
+
+set -euo pipefail
+
 mkdir -p "$DOCKER_SERVICE_ROOT/bin"
-
-curl -fsSL "https://raw.githubusercontent.com/rokan51/local-bin/refs/heads/main/bin/pkg" \
-     -o "$DOCKER_SERVICE_ROOT/bin/pkg"
-chmod +x "$DOCKER_SERVICE_ROOT/bin/pkg"
-
 curl -fsSL "https://raw.githubusercontent.com/rokan51/local-bin/refs/heads/main/bin/docker-setup" \
      -o "$DOCKER_SERVICE_ROOT/bin/docker-setup"
 chmod +x "$DOCKER_SERVICE_ROOT/bin/docker-setup"
-
-# Make them available for the rest of this script
-export PATH="$DOCKER_SERVICE_ROOT/bin:$PATH"
-
-# ------------------------------------------------------------------
-# Host-side Docker installation (uses pkg abstraction)
-# ------------------------------------------------------------------
-pkg update
-pkg upgrade
-# “docker” is mapped by pkg; compose/buildx packages vary by distro.
-# On Ubuntu/Debian the v2 plugin is usually docker-compose-plugin.
-pkg install docker docker-compose-plugin docker-buildx-plugin || \
-pkg install docker docker-compose docker-buildx || true
-
-pkg enable docker
-pkg start docker
 
 # ------------------------------------------------------------------
 # Dockerfile instructions (run as root inside the image)
@@ -65,13 +46,14 @@ INSTALL_XMAKE='RUN curl -fsSL https://xmake.io/shget.text | bash'
 INSTALL_GROK='RUN curl -fsSL https://x.ai/cli/install.sh | bash \
   && if [ -x /root/.local/bin/grok ]; then cp /root/.local/bin/grok /usr/local/bin/grok; fi || true'
 
-export DOCKERFILE_INSTRUCTIONS="${COPY_FILES}
-${INSTALL_PACKAGES}
-${INSTALL_XMAKE}
-${INSTALL_GROK}"
+export DOCKERFILE_INSTRUCTIONS="
+  ${COPY_FILES}
+  ${INSTALL_PACKAGES}
+  ${INSTALL_XMAKE}
+  ${INSTALL_GROK}"
 
 # ------------------------------------------------------------------
 # Hand off to the generic docker-setup
 # ------------------------------------------------------------------
 cd "$DOCKER_SERVICE_ROOT"
-docker-setup
+"$DOCKER_SERVICE_ROOT/bin/docker-setup"
