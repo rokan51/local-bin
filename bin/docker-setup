@@ -25,7 +25,7 @@ step() { echo "==> $*"; }
 : "${DOCKER_CPU_RATIO:=0.33}"
 : "${DOCKER_IMAGE_NAME:=${DOCKER_SERVICE_NAME}}"
 : "${DOCKER_CONTAINER_NAME:=${DOCKER_SERVICE_NAME}}"
-: "${DOCKER_USER:=${DOCKER_SERVICE_NAME}}"
+: "${DOCKER_USER:=${USER}}"
 : "${DOCKER_GROUP:=${DOCKER_USER}}"
 : "${DOCKER_USER_ID:=$(id -u)}"
 : "${DOCKER_GROUP_ID:=$(id -g)}"
@@ -86,10 +86,10 @@ ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 # Create matching user/group
 RUN set -eux;\\
   if getent passwd ${DOCKER_USER_ID} >/dev/null; then \\
-        userdel -r "$(getent passwd ${DOCKER_USER_ID} | cut -d: -f1)" || true; \\
+     userdel -r ${DOCKER_USER_ID} || true; \\
   fi; \\
   if getent group ${DOCKER_GROUP_ID} >/dev/null; then \\
-    groupdel "$(getent group ${DOCKER_GROUP_ID} | cut -d: -f1)" || true; \\
+     groupdel ${DOCKER_GROUP_ID} || true; \\
   fi; \\
   groupadd --gid ${DOCKER_GROUP_ID} ${DOCKER_GROUP} \\
   && useradd  --uid ${DOCKER_USER_ID} --gid ${DOCKER_GROUP_ID} \\

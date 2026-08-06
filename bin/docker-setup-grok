@@ -6,7 +6,8 @@
 
 
 # Name of the service / container
-export DOCKER_SERVICE_NAME=grok
+export DOCKER_SERVICE_NAME=grok-build
+export DOCKER_USER=grok
 
 # Base directory for this service’s files
 export DOCKER_SERVICE_ROOT="${HOME}/Private/docker/${DOCKER_SERVICE_NAME}"
