@@ -89,13 +89,12 @@ RUN set -eux; \\
     userdel -r debian  2>/dev/null || true; \\
     groupdel ubuntu    2>/dev/null || true; \\
     groupdel debian    2>/dev/null || true; \\
-
-RUN  groupadd --gid ${DOCKER_GROUP_ID} ${DOCKER_GROUP} 
-RUN  useradd  --uid ${DOCKER_USER_ID} --gid ${DOCKER_GROUP_ID} \\
+    groupadd --gid ${DOCKER_GROUP_ID} ${DOCKER_GROUP}\\ 
+    useradd  --uid ${DOCKER_USER_ID} --gid ${DOCKER_GROUP_ID} \\
               --home-dir /home/${DOCKER_USER} --no-create-home \\
-              --shell /bin/bash ${DOCKER_USER}
-RUN mkdir -p /home/${DOCKER_USER} \\
-  && chown ${DOCKER_USER}:${DOCKER_GROUP} /home/${DOCKER_USER}
+              --shell /bin/bash ${DOCKER_USER} \\
+    mkdir -p /home/${DOCKER_USER}; \\
+    chown ${DOCKER_USER}:${DOCKER_GROUP} /home/${DOCKER_USER}
 
 # Passwordless sudo
 RUN echo "${DOCKER_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${DOCKER_USER} \\
