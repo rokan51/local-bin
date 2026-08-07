@@ -97,8 +97,8 @@ RUN set -eux; \\
     chown ${DOCKER_USER}:${DOCKER_GROUP} /home/${DOCKER_USER}
 
 # Passwordless sudo
-RUN echo "${DOCKER_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${DOCKER_USER} \\
- && chmod 0440 /etc/sudoers.d/${DOCKER_USER}
+RUN echo "${DOCKER_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${DOCKER_USER}; \\
+    chmod 0440 /etc/sudoers.d/${DOCKER_USER}; 
  
 COPY --chmod=755 ./bin/* /usr/local/bin/
 
