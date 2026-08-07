@@ -85,12 +85,9 @@ ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 # Create matching user/group
 RUN set -eux;\\
-  if getent passwd ${DOCKER_USER_ID} >/dev/null; then \\
-     userdel -r ${DOCKER_USER_ID} || true; \\
-  fi; \\
-  if getent group ${DOCKER_GROUP_ID} >/dev/null; then \\
-     groupdel ${DOCKER_GROUP_ID} || true; \\
-  fi; 
+  userdel -r ${DOCKER_USER_ID} || true; \\
+  groupdel ${DOCKER_GROUP_ID} || true; 
+
 RUN  groupadd --gid ${DOCKER_GROUP_ID} ${DOCKER_GROUP} 
 RUN  useradd  --uid ${DOCKER_USER_ID} --gid ${DOCKER_GROUP_ID} \\
               --home-dir /home/${DOCKER_USER} --no-create-home \\
