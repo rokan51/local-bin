@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# docker-setup  (re-run tolerant) V 0.1
+# docker-setup  (re-run tolerant) V 0.2
 # Creates a Docker-contained development service.
 # Uses the "pkg" abstraction. Host and guest are expected to be Linux.
 # =============================================================================
