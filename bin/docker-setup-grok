@@ -22,8 +22,8 @@ export DOCKER_DISTRIBUTION="ubuntu:latest"
 set -euo pipefail
 
 mkdir -p "$DOCKER_SERVICE_ROOT/bin"
-curl -fsSL "https://raw.githubusercontent.com/rokan51/local-bin/refs/heads/main/bin/docker-setup" \
-     -o "$DOCKER_SERVICE_ROOT/bin/docker-setup"
+curl -fsSL -H "Accept: application/vnd.github.v3.raw" "https://api.github.com/repos/rokan51/local-bin/contents/bin/docker-setup?ref=main" -o "$DOCKER_SERVICE_ROOT/bin/docker-setup"
+# curl -fsSL "https://raw.githubusercontent.com/rokan51/local-bin/refs/heads/main/bin/docker-setup" -o "$DOCKER_SERVICE_ROOT/bin/docker-setup"
 chmod +x "$DOCKER_SERVICE_ROOT/bin/docker-setup"
 
 # ------------------------------------------------------------------
