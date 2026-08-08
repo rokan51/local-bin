@@ -56,7 +56,7 @@ export PATH="$DOCKER_SERVICE_ROOT/bin:$PATH"
 step "Creating shared directories"
 
 mkdir -p "$DOCKER_SERVICE_ROOT/home/$DOCKER_USER"
-chmod 2775 "$DOCKER_SERVICE_ROOT/$DOCKER_USER"          # rwxrwsr-x
+chmod 2775 "$DOCKER_SERVICE_ROOT/home/$DOCKER_USER"          # rwxrwsr-x
 
 mkdir -p "$DOCKER_SERVICE_ROOT/$DOCKER_USER/.local/bin"
 
