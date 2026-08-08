@@ -142,7 +142,7 @@ EOF
 # ---------------------------------------------------------------------------
 # docker compose ...  wrapper for service ${DOCKER_SERVICE_NAME}
 # ---------------------------------------------------------------------------
-step "Writing " ${DOCKER_SERVICE_NAME} wrapper"
+step "Writing ${DOCKER_SERVICE_NAME} wrapper"
 
 cat > "$DOCKER_SERVICE_ROOT/$DOCKER_SERVICE_NAME" << EOF
 
