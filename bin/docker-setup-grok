@@ -56,8 +56,9 @@ INSTALL_PACKAGES='RUN pkg update && pkg upgrade && pkg install \
   software-properties-common'
 
 # xmake is not always in the default Ubuntu repos – install via its official script
-INSTALL_XMAKE='RUN curl -fsSL https://xmake.io/shget.text | bash'
-
+# This one is temporarily broken, revert to it when fixed
+# INSTALL_XMAKE='RUN curl -fsSL https://xmake.io/shget.text | bash && cp /root/.local/bin/xmake /usr/local/bin/ && rm -rf /root/.local /root/.xmake'
+INSTALL_XMAKE='RUN curl -fsSL https://raw.githubusercontent.com/xmake-io/xmake/master/scripts/get.sh | bash && cp /root/.local/bin/xmake /usr/local/bin/ && rm -rf /root/.local /root/.xmake'
 
 export DOCKERFILE_INSTRUCTIONS="
   ${COPY_FILES}

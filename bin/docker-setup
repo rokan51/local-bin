@@ -138,6 +138,44 @@ services:
     restart: unless-stopped
 EOF
 
+
+# ---------------------------------------------------------------------------
+# docker compose ...  wratter for service ${DOCKER_SERVICE_NAME}
+# ---------------------------------------------------------------------------
+step "Writing " ${DOCKER_SERVICE_NAME} wrapper"
+
+cat > "$DOCKER_SERVICE_ROOT/$DOCKER_SERVICE_NAME" << EOF
+
+DOCKER_SERVICE_ROOT="$DOCKER_SERVICE_ROOT"
+DOCKER_SERVICE_NAME="$DOCKER_SERVICE_NAME"
+
+cd "\$DOCKER_SERVICE_ROOT/\$DOCKER_SERVICE_NAME"
+
+case "${1:-}" in
+  attach|exec|export|port|run)
+    action="\$1"
+    shift
+    n=1
+    while (( n <= \$# )) && [[ \${!n} == -* ]]; do
+      ((n++))
+    done
+    docker compose \$action "\${@:1:n-1}" "$DOCKER_SERVICE_NAME" "\${@:n}"
+    ;;
+  wait)
+    action="\$1"
+    shift
+    docker compose \$action "\$@"
+    ;;
+  *)
+    docker compose "\$DOCKER_SERVICE_NAME" "\$@"
+    ;;
+esac
+
+exit $?
+
+EOF
+
+
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
