@@ -32,7 +32,8 @@ step() { echo "==> $*"; }
 : "${DOCKER_SHARE:=share-ro}"
 : "${DOCKERFILE_INSTRUCTIONS:=}"
 
-
+echo "DS:$DOCKER_SHARE"
+ecxit 0
 
 DOCKER_SERVICE_ROOT=$(realpath -m "$DOCKER_SERVICE_ROOT")
 mkdir -p "$DOCKER_SERVICE_ROOT"
@@ -64,6 +65,7 @@ mkdir -p "$DOCKER_SERVICE_ROOT/$DOCKER_USER/.local/bin"
 
 mkdir -p "$DOCKER_SERVICE_ROOT/$DOCKER_SHARE"
 chmod 2755 "$DOCKER_SERVICE_ROOT/$DOCKER_SHARE"         # rwxr-sr-x
+touch "$DOCKER_SERVICE_ROOT/$DOCKER_SHARE/.THIS-IS-RO-SHARE"
 
 # ---------------------------------------------------------------------------
 # CPU limit
