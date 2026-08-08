@@ -159,11 +159,9 @@ case "\${1:-}" in
     while (( n <= \$# )) && [[ \${!n} == -* ]]; do
       ((n++))
     done
-    docker compose \$action "\${@:1:n-1}" "$DOCKER_SERVICE_NAME" "\${@:n}"
+    docker compose \$action "\${@:1:n-1}" "\$DOCKER_SERVICE_NAME" "\${@:n}"
     ;;
   wait)
-    action="\$1"
-    shift
     docker compose \$action "\$@"
     ;;
   *)
@@ -174,8 +172,6 @@ esac
 exit \$?
 
 EOF
-
-exit 0
 
 
 
