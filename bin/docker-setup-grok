@@ -4,16 +4,30 @@
 # environment using docker-setup
 # ----------------------------------------------------------
 
+# Service name. Can ve called like "agent-build", or simply "agent"
+export DOCKER_SERVICE_NAME="agent"
 
-# Name of the service / container
-export DOCKER_SERVICE_NAME=grok-build
-export DOCKER_USER=grok
+# Service/docker default user. It is deliberatelly/recomended nto name differently that $USER.
+export DOCKER_USER="agent"
 
-# Base directory for this service’s files
+# Service location - we store it in private encrypted space because 2 directories will be created there (see below)
 export DOCKER_SERVICE_ROOT="${HOME}/Private/docker/${DOCKER_SERVICE_NAME}"
 
-# Image base
+# Thwo directiries accesible from host are mounted to the docker system: 
+# - the agents rw home directory  ./$DOCKER_USER    mounted rw as agent's home  /home/$DOCKER_USER in the container
+# - general other shared directory ./$DOCKER_SHARE  mounted tor agent read-only under /$DOCKER_SHARE
+DOCKER_SHARE="share"
+
+# Installed agentic software. You can install multiple agents. Here is for grok-build
+INSTALL_AGENT='RUN curl -fsSL https://x.ai/cli/install.sh | bash && if [ -x /root/.local/bin/grok ]; then cp /root/.local/bin/grok /usr/local/bin/grok; fi || true'
+
+# Image base - distro  the agent service is based for.
 export DOCKER_DISTRIBUTION="ubuntu:latest"
+
+
+
+#############################################################################################################################################################################
+
 
 # ------------------------------------------------------------------
 # Fetch docker-setup
@@ -33,7 +47,7 @@ COPY_FILES='COPY --chmod=755 ./bin/* /usr/local/bin/'
 
 INSTALL_PACKAGES='RUN pkg update && pkg upgrade && pkg install \
   curl wget git \
-  build-essential gcc g++ gdb clang lld lldb \
+  build-essential gcc g++ gdb clang slangd clang-format lld lldb \
   cmake ninja-build pkg-config \
   vim nano mc htop tmux \
   ripgrep fd-find jq valgrind ccache \
@@ -44,14 +58,12 @@ INSTALL_PACKAGES='RUN pkg update && pkg upgrade && pkg install \
 # xmake is not always in the default Ubuntu repos – install via its official script
 INSTALL_XMAKE='RUN curl -fsSL https://xmake.io/shget.text | bash'
 
-INSTALL_GROK='RUN curl -fsSL https://x.ai/cli/install.sh | bash \
-  && if [ -x /root/.local/bin/grok ]; then cp /root/.local/bin/grok /usr/local/bin/grok; fi || true'
 
 export DOCKERFILE_INSTRUCTIONS="
   ${COPY_FILES}
   ${INSTALL_PACKAGES}
   ${INSTALL_XMAKE}
-  ${INSTALL_GROK}"
+  ${INSTALL_AGENT}"
 
 # ------------------------------------------------------------------
 # Hand off to the generic docker-setup
