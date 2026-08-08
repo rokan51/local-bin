@@ -140,7 +140,7 @@ EOF
 
 
 # ---------------------------------------------------------------------------
-# docker compose ...  wratter for service ${DOCKER_SERVICE_NAME}
+# docker compose ...  wrapper for service ${DOCKER_SERVICE_NAME}
 # ---------------------------------------------------------------------------
 step "Writing " ${DOCKER_SERVICE_NAME} wrapper"
 
@@ -151,7 +151,7 @@ DOCKER_SERVICE_NAME="$DOCKER_SERVICE_NAME"
 
 cd "\$DOCKER_SERVICE_ROOT/\$DOCKER_SERVICE_NAME"
 
-case "${1:-}" in
+case "\${1:-}" in
   attach|exec|export|port|run)
     action="\$1"
     shift
@@ -171,10 +171,11 @@ case "${1:-}" in
     ;;
 esac
 
-exit $?
+exit \$?
 
 EOF
 
+exit 0
 
 # ---------------------------------------------------------------------------
 # Build
