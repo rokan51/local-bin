@@ -144,7 +144,7 @@ EOF
 # ---------------------------------------------------------------------------
 step "Writing ${DOCKER_SERVICE_NAME} wrapper"
 
-cat > "$DOCKER_SERVICE_ROOT/$DOCKER_SERVICE_NAME" << EOF
+cat > "$DOCKER_SERVICE_ROOT/bin/$DOCKER_SERVICE_NAME" << EOF
 
 DOCKER_SERVICE_ROOT="$DOCKER_SERVICE_ROOT"
 DOCKER_SERVICE_NAME="$DOCKER_SERVICE_NAME"
@@ -173,7 +173,7 @@ exit \$?
 
 EOF
 
-
+chmod +x "$DOCKER_SERVICE_ROOT/bin/$DOCKER_SERVICE_NAME"
 
 # ---------------------------------------------------------------------------
 # Build
