@@ -46,7 +46,7 @@ chmod +x "$DOCKER_SERVICE_ROOT/bin/docker-setup"
 COPY_FILES='COPY --chmod=755 ./bin/* /usr/local/bin/'
 
 INSTALL_PACKAGES='RUN pkg update && pkg upgrade && pkg install \
-  curl wget git \
+  sudo curl wget git \
   build-essential gcc g++ gdb clang clangd clang-format lld lldb \
   cmake ninja-build pkg-config \
   vim nano mc htop tmux \

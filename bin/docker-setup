@@ -17,6 +17,7 @@ step() { echo "==> $*"; }
 [[ -n "${DOCKER_SERVICE_NAME:-}" ]] || die "DOCKER_SERVICE_NAME must be defined"
 [[ -n "${DOCKER_SERVICE_ROOT:-}" ]] || die "DOCKER_SERVICE_ROOT must be defined"
 
+echo "DS:$DOCKER_SHARE"
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
@@ -33,7 +34,7 @@ step() { echo "==> $*"; }
 : "${DOCKERFILE_INSTRUCTIONS:=}"
 
 echo "DS:$DOCKER_SHARE"
-ecxit 0
+exit 0
 
 DOCKER_SERVICE_ROOT=$(realpath -m "$DOCKER_SERVICE_ROOT")
 mkdir -p "$DOCKER_SERVICE_ROOT"
