@@ -30,7 +30,7 @@ echo "DS:$DOCKER_SHARE"
 : "${DOCKER_GROUP:=${DOCKER_USER}}"
 : "${DOCKER_USER_ID:=$(id -u)}"
 : "${DOCKER_GROUP_ID:=$(id -g)}"
-: "${DOCKER_SHARE:=share-ro}"
+: "${DOCKER_SHARE:=share}"
 : "${DOCKERFILE_INSTRUCTIONS:=}"
 
 echo "DS:$DOCKER_SHARE"
