@@ -176,7 +176,23 @@ case "\${1:-}" in
     docker compose \$action "\${args[@]}" "\$DOCKER_SERVICE_NAME" \$prog "\${@:n}"
     ;;
   *)
-    docker compose "\$@"
+    n=1
+    while (( n <= \$# )) && [[ \${!n} == -* ]]; do
+      ((n++))
+    done
+    if [[ "\${\!n}" == "grok" ]] ; then
+      args=()
+      for arg in "\${@:1:n-1}"; do
+        if [[ \$arg == *=* ]]; then
+          args+=("\${arg%%=*}" "\${arg#*=}")
+        else
+          args+=("\$arg")
+        fi
+      done
+      docker compose exec -it "\${args[@]}" "\$DOCKER_SERVICE_NAME" "\${@:n}"
+    else
+      docker compose "\$@"
+    fi
     ;;
 esac
 
