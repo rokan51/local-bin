@@ -149,7 +149,7 @@ cat > "$DOCKER_SERVICE_ROOT/bin/$DOCKER_SERVICE_NAME" << EOF
 DOCKER_SERVICE_ROOT="$DOCKER_SERVICE_ROOT"
 DOCKER_SERVICE_NAME="$DOCKER_SERVICE_NAME"
 
-cd "\$DOCKER_SERVICE_ROOT/\$DOCKER_SERVICE_NAME"
+cd "\$DOCKER_SERVICE_ROOT"
 
 case "\${1:-}" in
   attach|exec|export|port|run)
@@ -165,7 +165,7 @@ case "\${1:-}" in
     docker compose \$action "\$@"
     ;;
   *)
-    docker compose "\$DOCKER_SERVICE_NAME" "\$@"
+    docker compose "\$@"
     ;;
 esac
 
