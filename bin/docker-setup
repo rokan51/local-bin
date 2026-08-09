@@ -180,7 +180,7 @@ case "\${1:-}" in
     while (( n <= \$# )) && [[ \${!n} == -* ]]; do
       ((n++))
     done
-    if [[ "\${\!n}" == "grok" ]] ; then
+    if [[ "\${!n}" == "grok" ]] ; then
       args=()
       for arg in "\${@:1:n-1}"; do
         if [[ \$arg == *=* ]]; then
