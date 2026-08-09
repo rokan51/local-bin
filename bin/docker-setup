@@ -152,17 +152,23 @@ DOCKER_SERVICE_NAME="$DOCKER_SERVICE_NAME"
 cd "\$DOCKER_SERVICE_ROOT"
 
 case "\${1:-}" in
-  attach|exec|export|port|run)
+  attach|exec|export|port|run|wait)
     action="\$1"
     shift
     n=1
     while (( n <= \$# )) && [[ \${!n} == -* ]]; do
       ((n++))
     done
-    docker compose \$action "\${@:1:n-1}" "\$DOCKER_SERVICE_NAME" "\${@:n}"
-    ;;
-  wait)
-    docker compose \$action "\$@"
+    
+    args=()
+    for arg in "\${@:1:n-1}"; do
+        if [[ \$arg == *=* ]]; then
+          args+=("\${arg%%=*}" "\${arg#*=}")
+        else
+          args+=("\$arg")
+        fi
+    done
+    docker compose \$action "\${args[@]}" "\$DOCKER_SERVICE_NAME" "\${@:n}"
     ;;
   *)
     docker compose "\$@"
@@ -174,6 +180,8 @@ exit \$?
 EOF
 
 chmod +x "$DOCKER_SERVICE_ROOT/bin/$DOCKER_SERVICE_NAME"
+
+exit 0
 
 # ---------------------------------------------------------------------------
 # Build
