@@ -152,8 +152,13 @@ DOCKER_SERVICE_NAME="$DOCKER_SERVICE_NAME"
 cd "\$DOCKER_SERVICE_ROOT"
 
 case "\${1:-}" in
-  attach|exec|export|port|run|wait)
+  attach|exec|export|port|run|wait|grok)
     action="\$1"
+    prog=""
+    if [[ "\$action" == "grok" ]] ; then
+      prog="\$action"
+      action="exec -it"
+    fi
     shift
     n=1
     while (( n <= \$# )) && [[ \${!n} == -* ]]; do
@@ -168,7 +173,7 @@ case "\${1:-}" in
           args+=("\$arg")
         fi
     done
-    docker compose \$action "\${args[@]}" "\$DOCKER_SERVICE_NAME" "\${@:n}"
+    docker compose \$action "\${args[@]}" "\$DOCKER_SERVICE_NAME" $prog "\${@:n}"
     ;;
   *)
     docker compose "\$@"
