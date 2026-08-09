@@ -173,7 +173,7 @@ case "\${1:-}" in
           args+=("\$arg")
         fi
     done
-    docker compose \$action "\${args[@]}" "\$DOCKER_SERVICE_NAME" $prog "\${@:n}"
+    docker compose \$action "\${args[@]}" "\$DOCKER_SERVICE_NAME" \$prog "\${@:n}"
     ;;
   *)
     docker compose "\$@"
